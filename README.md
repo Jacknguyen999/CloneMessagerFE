@@ -2,6 +2,16 @@
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
+redux 
+thunk middleware
+react-redux
+
+react-router-dom
+
+tailwind css 
+mui
+
+
 ## Available Scripts
 
 In the project directory, you can run:
