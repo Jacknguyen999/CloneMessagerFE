@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import CircleIcon from '@mui/icons-material/Circle';
 import AddCommentIcon from '@mui/icons-material/AddComment';
 import SearchIcon from '@mui/icons-material/Search';
@@ -10,16 +10,17 @@ import EmojiEmotionsIcon from '@mui/icons-material/EmojiEmotions';
 import AttachmentIcon from '@mui/icons-material/Attachment';
 import SendIcon from '@mui/icons-material/Send';
 import UserProfile from './Profile/UserProfile';
-import { useLocation, useNavigate } from 'react-router-dom';
-
+import { useNavigate } from 'react-router-dom';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-import { Button, IconButton, Menu, MenuItem } from '@mui/material';
+import { Menu, MenuItem } from '@mui/material';
 import CreateGroup from './Group/CreateGroup';
 import { useDispatch, useSelector } from 'react-redux';
-import { currentUser, logOut, searchUser } from '../Redux/Auth/Action';
+import { currentUser, searchUser } from '../Redux/Auth/Action';
 import { createChat, getUserChat } from './../Redux/Chat/Action';
 import { createChatMessage, getAllChatMessage } from './../Redux/Message/Action';
 
+import { over } from "stompjs";
+import SockJS from 'sockjs-client';
 
 
 const Homepage = () => {
@@ -32,6 +33,89 @@ const Homepage = () => {
     const { auth, chat, message } = useSelector(store => store);
     const navigate = useNavigate();
     const jwt = localStorage.getItem('jwt');
+    const handleOpenModal = () => setModal(true);
+    const handleCloseModal = () => setModal(false);
+    const [anchorEl, setAnchorEl] = React.useState(null);
+    const open = Boolean(anchorEl);
+    const scrollRef = useRef(null);
+
+    const [stompClient, setStompClient] = useState();
+    const [Isconnected, setIsConnected] = useState(false);
+    const [messages, setMessages] = useState([]);
+
+    // connect socketjs
+    const connect = () => {
+
+        const sock = new SockJS("http://localhost:5454/ws")
+        const temp = over(sock);
+
+        setStompClient(temp);
+
+        const headers = {
+            Authorization: `Bearer ${jwt}`,
+            "X-XSRF-TOKEN": getCookie("XSRF-TOKEN"),
+
+        }
+
+        temp.connect(headers, onConnect, onError);
+
+    }
+
+    // getcookie
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+
+        if (parts.length === 2) return parts.pop().split(";").shift();
+
+    }
+
+    const onError = (error) => {
+        console.log("debug", error);
+    }
+
+    const onConnect = () => {
+        setIsConnected(true);
+    }
+
+    useEffect(() => {
+        if (message.newMessage && stompClient) {
+            setMessages([...messages, message.newMessage]);
+            stompClient?.send("/app/message", {}, JSON.stringify(message.newMessage));
+
+        }
+
+    }, [message.newMessage]);
+
+    const onMessageReceived = (payload) => {
+        const message = JSON.parse(payload.body);
+        setMessages((prevMessages) => [...prevMessages, message]);
+        dispatch(getUserChat({ jwt }));
+    };
+
+
+    useEffect(() => {
+        if (Isconnected && stompClient && auth.reqUser && currentChat) {
+            const subscription = stompClient.subscribe(`/group/${currentChat.chatId}`, onMessageReceived);
+            console.log("Subscribed to /group/" + currentChat.chatId);
+            console.log("message-----", message);
+            return () => {
+                subscription.unsubscribe();
+            };
+        }
+    }, [Isconnected, stompClient, auth.reqUser, currentChat]);
+
+    useEffect(() => {
+        console.log("message-----", message);
+        setMessages(message.messages);
+
+    }, [message.newMessage]);
+
+    useEffect(() => {
+        connect();
+    }, []);
+
+
 
 
 
@@ -46,33 +130,38 @@ const Homepage = () => {
                 !chatItem.group && // Ensure it's not a group chat
                 chatItem.users.some((user) => user.id === userId)
         );
-    
+
         if (existingChat) {
             // If chat exists, set it as the current chat
             setCurrentChat(existingChat);
+            dispatch(getAllChatMessage({ chatId: existingChat.chatId }));
         } else {
             // Create a new chat if no existing chat is found
             dispatch(createChat({ jwt, data: { userId } }));
         }
-    
+
         // Clear the search query
         setQuery("");
     };
 
     const handleCreateNewMessage = () => {
-        dispatch(createChatMessage({ data: { userId: auth.reqUser?.id, chatId: currentChat.chatId, message: content } }));
-
-    }
+        if (content && content.length > 0 && currentChat) {
+            const newMessage = {
+                userId: auth.reqUser?.id,
+                chatId: currentChat.chatId,
+                message: content
+            };
+            dispatch(createChatMessage({ data: newMessage }));
+            setContent("");
+        }
+    };
 
     const handleCreateGroup = () => {
         setIsGroup(true);
 
     }
 
-    const handleOpenModal = () => setModal(true);
-    const handleCloseModal = () => setModal(false);
-    const [anchorEl, setAnchorEl] = React.useState(null);
-    const open = Boolean(anchorEl);
+
     const handleClick = (e) => {
         setAnchorEl(e.currentTarget);
     };
@@ -80,8 +169,9 @@ const Homepage = () => {
         setAnchorEl(null);
     };
     const handleLogout = () => {
-        dispatch(logOut());
-        navigate("/signin");
+        localStorage.removeItem('jwt');
+
+        window.location.reload();
 
     }
 
@@ -91,7 +181,12 @@ const Homepage = () => {
     }
 
 
-
+    // scroll to bottom
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [message.messages]);
 
     // load chat , current user
     useEffect(() => {
@@ -110,9 +205,10 @@ const Homepage = () => {
 
     //get all message from current chat 
     useEffect(() => {
-        if (currentChat?.chatId)
+        if (currentChat?.chatId) {
             dispatch(getAllChatMessage({ chatId: currentChat.chatId }));
-    }, [currentChat,message.newMessage]);
+        }
+    }, [currentChat]);
 
 
 
@@ -192,8 +288,6 @@ const Homepage = () => {
                                 className="ml-4 text-2xl cursor-pointer hover:text-white transition-colors"
                             />
                         </div>
-
-
                         {/* Chat List */}
                         <div className="h-[75.9vh] px-3 overflow-y-auto scrollbar-hide scrollbar-thin 
                         scrollbar-thumb-gray-400 scrollbar-track-gray-200">
@@ -232,7 +326,6 @@ const Homepage = () => {
                                                         "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png"
                                                     }
                                                 />
-
                                             ) : (
                                                 <ChatCard
                                                     isChat={true}
@@ -256,9 +349,9 @@ const Homepage = () => {
                         </div>
                     </div>
                 </div>
-
                 {/* Right Content */}
-                <div className="right flex-1 bg-gray-200 flex flex-col">
+                <div className="right flex-1 bg-gray-200 flex flex-col"
+                >
                     {!currentChat ? (
                         <div className="w-full h-full flex items-center justify-center">
                             <div className="max-w-[70%] text-center">
@@ -276,13 +369,13 @@ const Homepage = () => {
                             </div>
                         </div>
                     ) : (
-                        <div className="w-full relative">
+                        <div className="w-full relative "
+                        >
                             {/* Chat Header */}
                             <div className="header sticky top-0 w-full bg-[#f5f5f5] shadow-md">
                                 <div className="flex justify-between items-center py-3 px-4">
                                     <div className="flex items-center space-x-4">
                                         <img
-                                            // src="https://cdn.pixabay.com/photo/2024/12/30/13/06/moped-9300285_640.jpg"
                                             src={
                                                 currentChat.group ? currentChat.chat_image || "https://cdn.pixabay.com/photo/2016/11/14/17/39/group-1824145_1280.png" :
                                                     (auth.reqUser?.id === currentChat.users[0].id
@@ -310,26 +403,28 @@ const Homepage = () => {
                                     </div>
                                 </div>
                             </div>
-
                             {/* Chat Content Below Header */}
                             <div className="px-10 h-[85vh] overflow-y-scroll scrollbar-hide bg-gray-300"
                                 style={{
-                                    backgroundImage: "url('https://img.freepik.com/premium-vector/seamless-pattern-with-different-social-media-icons_405287-75.jpg?semt=ais_hybrid'",
+                                    backgroundImage: "url('https://img.freepik.com/premium-vector/seamless-pattern-with-different-social-media-icons_405287-75.jpg?semt=ais_hybrid')",
                                 }}
-
+                                ref={scrollRef}
                             >
-                                <div className='space-y-4 flex flex-col justify-center  mt-7 py-2'>
-                                    {message.messages.length > 0 && message.messages?.map((item, i) =>
-                                        <MessageCard
-                                            isReqUserMessage={item.sender.id !== auth.reqUser.id}
-                                            content={item.content}
-
-                                        />)}
+                                <div className="space-y-4 flex flex-col justify-center mt-7  pb-24">
+                                    {message.messages.length > 0 &&
+                                        message?.messages.map((item, i) => (
+                                            <MessageCard
+                                                key={i}
+                                                fullName={item.sender.full_name}
+                                                isReqUserMessage={item.sender.id !== auth.reqUser.id}
+                                                content={item.content}
+                                                image={item.sender?.profile_pic}
+                                                timestamp={item.timestamp} // Ensure createdAt or timestamp is part of the message data
+                                            />
+                                        ))}
                                 </div>
-
                             </div>
                             {/* Footer */}
-
                             <div className="footer bg-gray-300 flex items-center justify-between px-4 py-3 sticky bottom-0 shadow-md">
                                 {/* Emoji and Attachment Icons */}
                                 <div className="flex space-x-3">
@@ -351,7 +446,6 @@ const Homepage = () => {
                                         }
                                     }}
                                 />
-
                                 {/* Send Icon */}
                                 <SendIcon
                                     className="cursor-pointer text-blue-500 hover:text-blue-700"
@@ -364,18 +458,12 @@ const Homepage = () => {
                         </div>
                     )}
                 </div>
-
             </div>
-
             {/* Profile Modal */}
             <UserProfile open={modal} onClose={handleCloseModal} />
-
             {/* Group Modal */}
             <CreateGroup open={isGroup} onClose={() => setIsGroup(false)} />
-
-
         </div>
-
     );
 };
 

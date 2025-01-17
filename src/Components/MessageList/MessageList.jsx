@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import MessageCard from '../MessageCard/MessageCard';
 import { useSelector } from 'react-redux';
 
-const MessageList = ({ messages }) => {
+export const MessageList = ({ messages }) => {
     const messageEndRef = useRef(null);
     const {auth} = useSelector(store => store);
 
